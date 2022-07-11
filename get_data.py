@@ -26,24 +26,25 @@ class dataManipulation():
 
 
 
-    def separate_target(self):
+    def separate_target(self, seed):
 
         try:
             data = self.df.to_numpy().astype(np.float32)
         except ValueError:
             if len(self.df.columns) < 3:
-                non_target_col = list(self.df.columns).pop(self.targetIndex)
-                target_col = list(self.df.columns).pop(self.targetIndex-1)
+                non_target_col = list(self.df.columns).pop(self.targetIndex-1)
+                target_col = list(self.df.columns).pop(self.targetIndex)
                 df_nonTarget = self.df[non_target_col].str.split(" ", expand=True)
-                df_target = pd.DataFrame(self.df[target_col])
+                df_target = pd.DataFrame(self.df[target_col])        
                 df_temp = pd.concat([df_target, df_nonTarget], axis = 1)
                 data = df_temp.to_numpy().astype(np.float32)
-
+                                
+                
         print(f"Shape of data is {data.shape}\nLenght of data is {len(data)}")
         if self.shuffle:
-            np.random.seed(110)
+            np.random.seed(seed)
             np.random.shuffle(data)
-
+            
         target = data[:,self.targetIndex]
         train_data = np.delete(data, self.targetIndex, 1)
 
@@ -56,8 +57,8 @@ class dataManipulation():
         self.X_train = train_data[:M]
         self.X_test = train_data[M:]
 
-    def get_processed_data(self):
+    def get_processed_data(self, seed):
         self.import_data()
-        self.separate_target()
+        self.separate_target(seed)
         self.preprocess_data()
 
