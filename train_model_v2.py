@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from math import ceil
+from math import ceil, pow
 import tensorflow.compat.v1 as tf
 tf.disable_v2_behavior()
 
@@ -48,8 +48,8 @@ class Model():
         
         for i in range( len(L)-1 ):
             
-            W = np.random.randn( L[i], L[i+1] ) / np.sqrt( L[i] )
-            b = np.zeros( L[i+1] )
+            W = (np.random.randn( L[i], L[i+1] ) / np.sqrt( L[i] )).astype(np.float32)
+            b = np.zeros( L[i+1] ).astype(np.float32)
             self.weights.append(W)
             self.bias.append(b)
 
@@ -88,8 +88,11 @@ class Model():
                     Z_list.append( tf.nn.relu( tf.matmul( Z_list[i-1],W_list[i] ) + b_list[i]) )
                 else:    
                     Z_list.append( tf.matmul( Z_list[i-1],W_list[i] ) + b_list[i] )
-
-        cost = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits( logits = Z_list[-1], labels = T) )
+        
+        reg_weight = sum([tf.nn.l2_loss(w) for w in self.weights])
+        reg_bias = sum([tf.nn.l2_loss(b) for b in self.bias])
+        regu = reg * ( reg_weight + reg_bias)
+        cost = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits( logits = Z_list[-1], labels = T) ) + regu
 
         train_model_op = tf.train.RMSPropOptimizer(self.l_rate, self.decay, self.momentum).minimize(cost)
         predict = tf.argmax(Z_list[-1], 1)
@@ -119,7 +122,8 @@ class Model():
         plt.title(f"Error Rate of Model on Test Data in {self.n_iter} Iterations")
 
         # Reseting for another model
-        history = {"model_id" : self.modelNo, "test_error": self.test_error, "layers": self.layers}
+        history = {"model_id" : self.modelNo,"trainin_error": self.final_training_error, 
+                    "test_error": self.test_error[-1], "layers": self.layers}
         self.pastModels.append(history)
 
         self.layers = []
