@@ -1,22 +1,36 @@
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
-from get_data import dataManipulation
+from math import ceil
+import tensorflow.compat.v1 as tf
+tf.disable_v2_behavior()
 
 class Model():
-    def __init__(self, l_rate, n_iter, reg, data) -> None:
+    def __init__(self, data, batch_size = 100, l_rate = 0.003, n_iter = 100, reg = 0.0, decay = 0.99, momentum = 0.9 ) -> None:
         self.l_rate = l_rate
         self.n_iter = n_iter
         self.reg = reg
+        self.decay = decay
+        self.momentum = momentum
+        self.b_size = batch_size
+
+        self.layers = []
+        self.weights = []
+        self.bias = []
         
-        data = dataManipulation()
-        data.get_processed_data()
         self.X_train = data.X_train
         self.Y_train = data.Y_train
         self.X_test = data.X_test
         self.Y_test = data.Y_test
 
-    def indicatorMatrix(y):
+        self.test_error = []
+        self.final_training_error = -1
+
+    
+    def addLayer(self, density):
+        self.layers.append(density)
+
+    def indicatorMatrix(self, y):
         N = len(y)
         y = y.astype(np.int32)
         K = y.max() + 1
@@ -26,97 +40,77 @@ class Model():
             ind[n,k] = 1
         return ind
 
-    def forwardPropagation(X,W,b):
-        Z = X.dot(W) + b
-        expZ = np.exp(Z)
-        return expZ / expZ.sum(axis = 1, keepdims = True)
+    def initializeParameters(self, Y_ind_train):
+        
+        M, NX = self.X_train.shape
+        K = Y_ind_train.shape[1]
+        self.layers.insert(0,NX)
+        self.layers.append(K)
+        L = self.layers
+        
+        for i in range( len(L)-1 ):
+            
+            W = np.random.randn( L[i], L[i+1] ) / np.sqrt( L[i] )
+            b = np.zeros( L[i+1] )
+            self.weights.append(W)
+            self.bias.append(b)
 
-    def cost(p_y, t):
-        tot = t * np.log(p_y)
-        return -tot.sum()
+    def error_rate(self, p_y, t):
+        return np.mean(p_y != t)
 
-    def predict(p_y):
-        return np.argmax(p_y, axis = 1)
+    def linearModel(self):
 
-    def error_rate(p_y, t):
-        prediction = predict(p_y)
-        return np.mean(prediction != t)
+        Y_train_ind = self.indicatorMatrix(self.Y_train)
+        Y_test_ind = self.indicatorMatrix(self.Y_test)
 
+        self.initializeParameters(Y_train_ind)
+        n_batch = ceil(self.X_train.shape[0]/self.b_size)
 
-    def gradW(t, y, X):
-        return X.T.dot(t - y)
+        X = tf.placeholder(tf.float32, shape = (None, self.X_train.shape[1]), name = 'X')
+        T = tf.placeholder(tf.float32, shape = (None, Y_train_ind.shape[1]), name = 'T')
+        W_list = []
+        b_list = []
+        Z_list = []
 
-    def gradb(t, y):
-        return (t - y).sum(axis = 0)
+        for i in range(len(self.weights)):
+            print(f"index is {i}")
+            W_list.append( tf.Variable(self.weights[i].astype(np.float32)) )
+            b_list.append( tf.Variable(self.bias[i].astype(np.float32)) )
+            if i != len(self.weights) - 1:
+                Z_list.append( tf.nn.relu( tf.matmul( X,W_list[i] ) + b_list[i]) )
 
+        Z_list.append( tf.matmul( X,W_list[i] ) + b_list[i] )
 
-    def linearModel(path, index, split_ratio = 0.7, shuffle = 1, learning_rate = 0.0001, regularization = 0.0, n_iter = 100):
+        cost = tf.reduce_sum(tf.nn.softmax_cross_entropy_with_logits( logits = Z_list[-1], labels = T) )
 
-        train_x, train_y, test_x, test_y = get_data(path, index, split_ratio, shuffle)
+        train_model_op = tf.train.RMSPropOptimizer(self.l_rate, self.decay, self.momentum).minimize(cost)
+        predict = tf.argmax(Z_list[-1], 1)
+        
+        init = tf.initialize_all_variables()
 
-        M, NX = train_x.shape
-        test_indicatorMatrix = indicatorMatrix(test_y)
-        train_indicatorMatrix = indicatorMatrix(train_y)
-        K = train_indicatorMatrix.shape[1]
-        print(f"Target number is {K}")
-        print(f"Train ind matrix is : {train_indicatorMatrix.shape}")
-        print(f"Test ind matrix is : {train_indicatorMatrix.shape}")
+        with tf.Session() as s:
+            s.run(init)
+            for i in range(self.n_iter):
+                for j in range(n_batch):
+                    Xbatch = self.X_train[ j*self.b_size : (j+1)*self.b_size, ]
+                    Ybatch = Y_train_ind[ j*self.b_size : (j+1)*self.b_size, ]
+                    s.run(train_model_op, feed_dict = {X: Xbatch, T: Ybatch})
+                    if not (j%10):
+                        current_cost = s.run(cost, feed_dict = {X: self.X_test, T: Y_test_ind})
+                        predictions = s.run(predict, feed_dict = {X: self.X_test})
+                        error = self.error_rate(predictions, self.Y_test)
+                    print(f"Iteration of {i} in {j}th batch : [{i},{j}] Cost : {current_cost:.3f} Error: {error:.3f}")
+                    self.test_error.append(error)
+            train_prediction = s.run(predict, feed_dict = { X: self.X_train })
+            self.final_training_error = self.error_rate(train_prediction, self.Y_train)
 
-        print("Initialization of weight matrix and bias vector has started...\n")
-        W = np.random.randn(NX,K) / np.sqrt(NX)
-        print(f"Shape of W is {W.shape}")
-        b = np.zeros(K)
-        print(f"Shape of b is {b.shape}")
-        print("\nInitialization of weight matrix and bias vector has COMPLETED\n")
+        print(f"Final Training Error is {self.final_training_error}")
+        print(f"Final Test Error is {self.test_error[-1]}")
 
-        train_losses, test_losses, train_error, test_error = [],[],[],[]
+        plt.plot(self.test_error, label = "Error rate")
+        plt.title(f"Error Rate of Model on Test Data in {self.n_iter} Iterations")
 
         print("Training has started.\n")
 
-        for i in range(n_iter):
-
-            p_y = forwardPropagation(train_x, W, b)
-            trainLoss = cost(p_y, train_indicatorMatrix)
-            train_losses.append(trainLoss)
-            trainError = error_rate(p_y, train_y)
-            train_error.append(trainError)
-
-            p_y_test = forwardPropagation(test_x, W, b)
-            testLoss = cost(p_y_test, test_indicatorMatrix)
-            test_losses.append(testLoss)
-            testError = error_rate(p_y_test, test_y)
-            test_error.append(testError)
-
-            W += learning_rate*(gradW( train_indicatorMatrix, p_y, train_x) - regularization*W)
-            b += learning_rate*(gradb( train_indicatorMatrix, p_y ))
-
-            if (i+1)%10 == 0:
-                print(f"Iteration : {i+1} Train Loss : {trainLoss:.3f} Train Error : {trainError:.3f}")
-                print(f"                  Test Loss  : {testLoss:.3f}  Test Error  : {testError:.3f}")
-
-        p_y = forwardPropagation(test_x, W, b)
-
-        print("Training has finished.\n")
-        print(f"Final error rate is {error_rate(p_y, test_y)}")
-
-        results = {
-            "test_error_rate": error_rate(p_y, test_y),
-            "test_losses": test_losses,
-            "costs": train_losses,
-            "errors": train_error,
-            "w" : W,
-            "b" : b,
-            "n_iter" : n_iter,
-        }
-
-        return results
-
-def plot(results):
-    for c,result in enumerate(results):
-        plt.plot(result["costs"], label = f"Cost of Model {c}")
-        plt.plot(result["test_losses"])
-    plt.title("Loss per iteration")
-    plt.legend()
-    plt.show()
 
     

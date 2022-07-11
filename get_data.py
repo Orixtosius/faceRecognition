@@ -41,7 +41,7 @@ class dataManipulation():
 
         print(f"Shape of data is {data.shape}\nLenght of data is {len(data)}")
         if self.shuffle:
-            np.random.seed(100)
+            np.random.seed(110)
             np.random.shuffle(data)
 
         target = data[:,self.targetIndex]
